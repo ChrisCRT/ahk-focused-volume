@@ -2,35 +2,38 @@
 #SingleInstance Force
 Persistent
 
-application := "A" ; "A" for focused window or "example.exe" to target a specific app
+SETTINGS_FILE := A_ScriptDir "\settings.ini"
+APPLICATION := IniRead(SETTINGS_FILE, "Preferences", "ApplicationTarget", 1) ; "A" for focused window or "example.exe" to target a specific app
+ENABLE_TOOLTIPS := !!IniRead(SETTINGS_FILE, "Preferences", "EnableTooltips", 1)
+
+DEBUG := false
 
 ; # is Win, + is Shift, ^ is Ctrl, ! is Alt
 Volume_Up:: {
-    result := AudioManager.AppVolume(application, "+2")
+    result := AudioManager.AppVolume(APPLICATION, "+2")
     if (result != -1) {
-        Utility.CreateToolTip(result.title " | " result.state)
-        Utility.UpdateTrayIcon(result.state)
+        Utility.UpdateAll(result)
     }
 }
 
 Volume_Down:: {
-    result := AudioManager.AppVolume(application, "-2")
+    result := AudioManager.AppVolume(APPLICATION, "-2")
     if (result != -1) {
-        Utility.CreateToolTip(result.title " | " result.state)
-        Utility.UpdateTrayIcon(result.state)
+        Utility.UpdateAll(result)
     }
 }
 
 Volume_Mute:: {
-    result := AudioManager.AppVolume(application, "toggle")
+    result := AudioManager.AppVolume(APPLICATION, "toggle")
     if (result != -1) {
-        Utility.CreateToolTip(result.title " | " result.state)
-        Utility.UpdateTrayIcon(result.state)
+        Utility.UpdateAll(result)
     }
 }
 
-class AudioManager {
+lastChange := ""
+Utility.init()
 
+class AudioManager {
     ; Returns object with title (String, window title) and state (String, can be "Muted" or current volume percent)
     static AppVolume(target := "A", level := "+1") {
         winTitle := ""
@@ -62,6 +65,9 @@ class AudioManager {
         }
 
         winTitle := StrUpper(SubStr(name := RegExReplace(appName, "\.exe$", ""), 1, 1)) . SubStr(name, 2)
+
+        global lastChange
+        lastChange := { title: winTitle, state: volumeState }
 
         return { title: winTitle, state: volumeState }
     }
@@ -139,30 +145,121 @@ class AudioManager {
     }
 }
 
-trayIcon := A_WinDir . "\System32\SndVolSSO.dll"
-TraySetIcon(trayIcon, 11)
-
 class Utility {
+    static init() {
+        Tray.UpdateIcon()
+        Tray.UpdateMenu()
+    }
+
+    static UpdateAll(result := {}) {
+        global ENABLE_TOOLTIPS
+
+        if (ENABLE_TOOLTIPS) {
+            this.CreateToolTip(result.title " - " result.state)
+        }
+
+        Tray.UpdateIcon(result.state)
+        Tray.UpdateMenu(result.title " - " result.state)
+    }
+
     static CreateToolTip(msg) {
         ToolTip(msg)
         SetTimer(() => ToolTip(), -1000)
     }
+}
 
-    static UpdateTrayIcon(volume) {
+class Tray {
+    static UpdateIcon(volume := "") {
+        trayIcon := A_WinDir . "\System32\SndVolSSO.dll"
+        if (volume = "") {
+            TraySetIcon(trayIcon, 11)
+        }
+
         if (volume = "Muted") {
             TraySetIcon(trayIcon, 2)
-        } else {
+        } else if (volume != "") {
             volumeLevel := Integer(StrReplace(volume, "%"))
             if (volumeLevel = 0) {
                 TraySetIcon(trayIcon, 8)
-            } else if (volumeLevel <= 35) {
+            } else if (volumeLevel <= 50) {
                 TraySetIcon(trayIcon, 9)
             }
-            else if (volumeLevel <= 75) {
+            else if (volumeLevel <= 100) {
                 TraySetIcon(trayIcon, 10)
             } else {
                 TraySetIcon(trayIcon, 11)
             }
         }
+    }
+
+    static UpdateMenu(msg := "") {
+        A_TrayMenu.Delete()
+
+        if (msg != "") {
+            A_TrayMenu.Add("Last Change: " msg, this.Empty)
+            A_TrayMenu.Add()
+        }
+        A_TrayMenu.Add("Open &Settings", this.OpenSettings)
+
+        A_TrayMenu.Add("Show &Tooltips", this.ToggleTooltips)
+        if (ENABLE_TOOLTIPS) {
+            A_TrayMenu.Check("Show &Tooltips")
+        }
+
+        A_TrayMenu.Add()
+        A_TrayMenu.Add("&Volume Mixer", this.OpenVolumeMixer)
+        A_TrayMenu.Add()
+
+        if (DEBUG) {
+            A_TrayMenu.Add("&Reload", this.Restart)
+        }
+
+        A_TrayMenu.Add("E&xit", this.Exit)
+    }
+
+    static ToggleTooltips(*) {
+        global ENABLE_TOOLTIPS, SETTINGS_FILE
+
+        ENABLE_TOOLTIPS := !ENABLE_TOOLTIPS
+
+        if (ENABLE_TOOLTIPS) {
+            A_TrayMenu.Check("Show &Tooltips")
+        } else {
+            A_TrayMenu.Uncheck("Show &Tooltips")
+        }
+
+        IniWrite(ENABLE_TOOLTIPS ? 1 : 0, SETTINGS_FILE, "Preferences", "EnableTooltips")
+
+        if (!ENABLE_TOOLTIPS) {
+            ToolTip()
+        }
+    }
+
+    static OpenSettings(*) {
+        global SETTINGS_FILE
+
+        if (!FileExist(SETTINGS_FILE)) {
+            IniWrite("A", SETTINGS_FILE, "Preferences", "ApplicationTarget")
+            IniWrite(1, SETTINGS_FILE, "Preferences", "EnableTooltips")
+        }
+
+        Run(SETTINGS_FILE)
+
+    }
+
+    static OpenVolumeMixer(*) {
+        Run("ms-settings:apps-volume")
+    }
+
+    static Exit(*) {
+        ExitApp
+    }
+
+    static Restart(*) {
+        Reload
+    }
+
+    static Empty(*) {
+
     }
 }
