@@ -43,6 +43,7 @@ Volume_Mute:: {
 
 lastChange := ""
 focusedApp := ""
+toggleFocusActive := false
 
 Utility.init()
 
@@ -86,17 +87,22 @@ class AudioManager {
     }
 
     static ToggleFocus(target := "A") {
+        global toggleFocusActive
 
         focused := this.GetAppName(target)
         focusState := ""
 
+        ; TODO doesnt quite work if the focus setting is changed, global var as toggle here means the text is wrong when trying to change focus
+
         if (focused = SETTINGS.application) {
             SETTINGS.application := IniRead(SETTINGS.file, "Preferences", "ApplicationTarget", 1)
             focusState := "Unfocused"
+            toggleFocusActive := false
 
         } else {
             SETTINGS.application := focused
             focusState := "Focused"
+            toggleFocusActive := true
         }
 
         winTitle := Utility.FormatTitleCase(focused)
@@ -234,7 +240,6 @@ class Utility {
     }
 
     static DefaultSettings() {
-
         IniWrite("A", SETTINGS.file, "Preferences", "ApplicationTarget")
         IniWrite("A", SETTINGS.file, "Preferences", "ToggleFocusApplication")
         IniWrite(1, SETTINGS.file, "Preferences", "EnableTooltips")
@@ -267,12 +272,20 @@ class Tray {
     }
 
     static UpdateMenu(msg := "") {
+        global toggleFocusActive
+
         A_TrayMenu.Delete()
 
         if (msg != "") {
             A_TrayMenu.Add("Last Change: " msg, this.Empty)
             A_TrayMenu.Add()
         }
+
+        if (toggleFocusActive) {
+            A_TrayMenu.Add("Focus: " Utility.FormatTitleCase(SETTINGS.application), this.Empty)
+            A_TrayMenu.Add()
+        }
+
         A_TrayMenu.Add("Open &Settings", this.OpenSettings)
 
         A_TrayMenu.Add("Show &Tooltips", this.ToggleTooltips)
@@ -292,7 +305,6 @@ class Tray {
     }
 
     static ToggleTooltips(*) {
-
         SETTINGS.enable_tooltips := !SETTINGS.enable_tooltips
 
         if (SETTINGS.enable_tooltips) {
