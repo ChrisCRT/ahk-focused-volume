@@ -2,35 +2,48 @@
 #SingleInstance Force
 Persistent
 
-SETTINGS_FILE := A_ScriptDir "\settings.ini"
-APPLICATION := IniRead(SETTINGS_FILE, "Preferences", "ApplicationTarget", 1) ; "A" for focused window or "example.exe" to target a specific app
-ENABLE_TOOLTIPS := !!IniRead(SETTINGS_FILE, "Preferences", "EnableTooltips", 1)
-
-DEBUG := false
+SETTINGS := {
+    file: A_ScriptDir "\settings.ini",
+    application: Trim(IniRead(A_ScriptDir "\settings.ini", "Preferences", "ApplicationTarget", 1)),
+    focus_application: Trim(IniRead(A_ScriptDir "\settings.ini", "Preferences", "ToggleFocusApplication", 1)),
+    enable_tooltips: !!Trim(IniRead(A_ScriptDir "\settings.ini", "Preferences", "EnableTooltips", 1)),
+    debug: true,
+}
 
 ; # is Win, + is Shift, ^ is Ctrl, ! is Alt
-Volume_Up:: {
-    result := AudioManager.AppVolume(APPLICATION, "+2")
+Volume_Up::
+!Volume_Up:: {
+    result := AudioManager.AppVolume(SETTINGS.application, "+2")
     if (result != -1) {
         Utility.UpdateAll(result)
     }
 }
 
-Volume_Down:: {
-    result := AudioManager.AppVolume(APPLICATION, "-2")
+Volume_Down::
+!Volume_Down:: {
+    result := AudioManager.AppVolume(SETTINGS.application, "-2")
     if (result != -1) {
         Utility.UpdateAll(result)
     }
 }
 
 Volume_Mute:: {
-    result := AudioManager.AppVolume(APPLICATION, "toggle")
+    result := AudioManager.AppVolume(SETTINGS.application, "toggle")
+    if (result != -1) {
+        Utility.UpdateAll(result)
+    }
+}
+
+!Volume_Mute:: {
+    result := AudioManager.ToggleFocus(SETTINGS.focus_application)
     if (result != -1) {
         Utility.UpdateAll(result)
     }
 }
 
 lastChange := ""
+focusedApp := ""
+
 Utility.init()
 
 class AudioManager {
@@ -49,27 +62,46 @@ class AudioManager {
             return -1
         }
 
-        levelOld := this.GetAppVolume(appAudioSession)
+        currentVolume := this.GetAppVolume(appAudioSession)
 
         if (level = "toggle") {
             wasMuted := this.GetAppState(appAudioSession)
             this.SetAppState(appAudioSession, !wasMuted)
-            volumeState := wasMuted ? Round(levelOld * 100) "%" : "Muted"
+            volumeState := wasMuted ? Round(currentVolume * 100) "%" : "Muted"
         } else {
-            levelNew := (level ~= "^[+-]")
-                ? Max(0.0, Min(1.0, levelOld + (Integer(level) / 100)))
+            newVolume := (level ~= "^[+-]")
+                ? Max(0.0, Min(1.0, currentVolume + (Integer(level) / 100)))
                 : Max(0.0, Min(1.0, Integer(level) / 100))
             this.SetAppState(appAudioSession, false)  ; Disable mute
-            this.SetAppVolume(appAudioSession, levelNew)
-            volumeState := Round(levelNew * 100) "%"
+            this.SetAppVolume(appAudioSession, newVolume)
+            volumeState := Round(newVolume * 100) "%"
         }
 
-        winTitle := StrUpper(SubStr(name := RegExReplace(appName, "\.exe$", ""), 1, 1)) . SubStr(name, 2)
+        winTitle := Utility.FormatTitleCase(appName)
 
         global lastChange
         lastChange := { title: winTitle, state: volumeState }
 
         return { title: winTitle, state: volumeState }
+    }
+
+    static ToggleFocus(target := "A") {
+
+        focused := this.GetAppName(target)
+        focusState := ""
+
+        if (focused = SETTINGS.application) {
+            SETTINGS.application := IniRead(SETTINGS.file, "Preferences", "ApplicationTarget", 1)
+            focusState := "Unfocused"
+
+        } else {
+            SETTINGS.application := focused
+            focusState := "Focused"
+        }
+
+        winTitle := Utility.FormatTitleCase(focused)
+
+        return { title: winTitle, state: focusState }
     }
 
     static GetAppName(target) {
@@ -78,9 +110,9 @@ class AudioManager {
         }
 
         try {
-            hw := DetectHiddenWindows(true)
+            hiddenWindowsState := DetectHiddenWindows(true) ; enable detecting hidden windows
             appName := WinGetProcessName(target)
-            DetectHiddenWindows(hw)
+            DetectHiddenWindows(hiddenWindowsState) ; sets detection to default
             return appName
         } catch {
             return ""
@@ -100,13 +132,13 @@ class AudioManager {
 
     static GetAppVolume(appAudioSession) {
         ; returns float between 0 and 1
-        ComCall(4, appAudioSession, "Float*", &levelOld := 0)
-        return levelOld
+        ComCall(4, appAudioSession, "Float*", &currentVolume := 0)
+        return currentVolume
     }
 
-    static SetAppVolume(appAudioSession, levelNew) {
+    static SetAppVolume(appAudioSession, newVolume) {
         ; set to float between 0 and 1
-        ComCall(3, appAudioSession, "Float", levelNew, "Ptr", 0)
+        ComCall(3, appAudioSession, "Float", newVolume, "Ptr", 0)
     }
 
     static GetAudioSession(appName := "A") {
@@ -147,14 +179,18 @@ class AudioManager {
 
 class Utility {
     static init() {
+        if (!FileExist(SETTINGS.file)) {
+            Utility.DefaultSettings
+        }
+
         Tray.UpdateIcon()
         Tray.UpdateMenu()
+
+        SetTimer(() => this.CheckFocusedWindow(), 5000)
     }
 
-    static UpdateAll(result := {}) {
-        global ENABLE_TOOLTIPS
-
-        if (ENABLE_TOOLTIPS) {
+    static UpdateAll(result := { title: "", state: "" }) {
+        if (SETTINGS.enable_tooltips) {
             this.CreateToolTip(result.title " - " result.state)
         }
 
@@ -166,13 +202,51 @@ class Utility {
         ToolTip(msg)
         SetTimer(() => ToolTip(), -1000)
     }
+
+    static CheckFocusedWindow() {
+        global focusedApp
+
+        appName := AudioManager.GetAppName(SETTINGS.application)
+        if (!appName) {
+            return
+        }
+
+        if (appName = focusedApp || appName = "explorer.exe") {
+            return
+        }
+
+        focusedApp := appName
+        session := AudioManager.GetAudioSession(appName)
+        if (!session) {
+            return
+        }
+
+        volume := AudioManager.GetAppVolume(session)
+        muted := AudioManager.GetAppState(session)
+
+        state := muted ? "Muted" : Round(volume * 100) "%"
+
+        Tray.UpdateIcon(state)
+    }
+
+    static FormatTitleCase(title) {
+        return StrUpper(SubStr(name := RegExReplace(title, "\.exe$", ""), 1, 1)) . SubStr(name, 2)
+    }
+
+    static DefaultSettings() {
+
+        IniWrite("A", SETTINGS.file, "Preferences", "ApplicationTarget")
+        IniWrite("A", SETTINGS.file, "Preferences", "ToggleFocusApplication")
+        IniWrite(1, SETTINGS.file, "Preferences", "EnableTooltips")
+    }
 }
 
 class Tray {
     static UpdateIcon(volume := "") {
         trayIcon := A_WinDir . "\System32\SndVolSSO.dll"
-        if (volume = "") {
+        if (volume = "" || SubStr(volume, -1) != "%") {
             TraySetIcon(trayIcon, 11)
+            return
         }
 
         if (volume = "Muted") {
@@ -181,10 +255,10 @@ class Tray {
             volumeLevel := Integer(StrReplace(volume, "%"))
             if (volumeLevel = 0) {
                 TraySetIcon(trayIcon, 8)
-            } else if (volumeLevel <= 50) {
+            } else if (volumeLevel <= 49) {
                 TraySetIcon(trayIcon, 9)
             }
-            else if (volumeLevel <= 100) {
+            else if (volumeLevel <= 99) {
                 TraySetIcon(trayIcon, 10)
             } else {
                 TraySetIcon(trayIcon, 11)
@@ -202,7 +276,7 @@ class Tray {
         A_TrayMenu.Add("Open &Settings", this.OpenSettings)
 
         A_TrayMenu.Add("Show &Tooltips", this.ToggleTooltips)
-        if (ENABLE_TOOLTIPS) {
+        if (SETTINGS.enable_tooltips) {
             A_TrayMenu.Check("Show &Tooltips")
         }
 
@@ -210,7 +284,7 @@ class Tray {
         A_TrayMenu.Add("&Volume Mixer", this.OpenVolumeMixer)
         A_TrayMenu.Add()
 
-        if (DEBUG) {
+        if (SETTINGS.debug) {
             A_TrayMenu.Add("&Reload", this.Restart)
         }
 
@@ -218,32 +292,29 @@ class Tray {
     }
 
     static ToggleTooltips(*) {
-        global ENABLE_TOOLTIPS, SETTINGS_FILE
 
-        ENABLE_TOOLTIPS := !ENABLE_TOOLTIPS
+        SETTINGS.enable_tooltips := !SETTINGS.enable_tooltips
 
-        if (ENABLE_TOOLTIPS) {
+        if (SETTINGS.enable_tooltips) {
             A_TrayMenu.Check("Show &Tooltips")
         } else {
             A_TrayMenu.Uncheck("Show &Tooltips")
         }
 
-        IniWrite(ENABLE_TOOLTIPS ? 1 : 0, SETTINGS_FILE, "Preferences", "EnableTooltips")
+        IniWrite(SETTINGS.enable_tooltips ? 1 : 0, SETTINGS.file, "Preferences", "EnableTooltips")
 
-        if (!ENABLE_TOOLTIPS) {
+        if (!SETTINGS.enable_tooltips) {
             ToolTip()
         }
     }
 
     static OpenSettings(*) {
-        global SETTINGS_FILE
 
-        if (!FileExist(SETTINGS_FILE)) {
-            IniWrite("A", SETTINGS_FILE, "Preferences", "ApplicationTarget")
-            IniWrite(1, SETTINGS_FILE, "Preferences", "EnableTooltips")
+        if (!FileExist(SETTINGS.file)) {
+            Utility.DefaultSettings
         }
 
-        Run(SETTINGS_FILE)
+        Run(SETTINGS.file)
 
     }
 
