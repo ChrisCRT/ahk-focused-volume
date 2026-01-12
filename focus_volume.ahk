@@ -42,7 +42,7 @@ class App {
         Tray.UpdateMenu()
 
         SetTimer(() => this.HandleFocusChange(), 5000)
-        SetTimer(() => AudioManager.InvalidateCache(), 10000)
+        SetTimer(() => AudioManager.InvalidateCache(), 60000)
     }
 
     static Volume(level := "+2", target := STATE.application) {
@@ -90,7 +90,6 @@ class App {
     }
 
     static HandleFocusChange() {
-        AudioManager.InvalidateCache()
         appName := Utility.GetAppName(SETTINGS.application)
         if (!appName || appName = "explorer.exe") {
             return
@@ -243,7 +242,8 @@ class AudioManager {
         ComCall(this.COM.ACTIVATE, IMMDevice, "Ptr", GUID, "UInt", 23, "Ptr", 0, "Ptr*", &IAudioSessionManager2 := 0)
         ObjRelease(IMMDevice)
 
-        ComCall(this.COM.GET_SESSION_ENUMERATOR, IAudioSessionManager2, "Ptr*", &IAudioSessionEnumerator := 0) || DllCall("SetLastError", "UInt", 0)
+        ComCall(this.COM.GET_SESSION_ENUMERATOR, IAudioSessionManager2, "Ptr*", &IAudioSessionEnumerator := 0) ||
+        DllCall("SetLastError", "UInt", 0)
         ObjRelease(IAudioSessionManager2)
 
         return IAudioSessionEnumerator
@@ -261,7 +261,8 @@ class AudioManager {
         ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
 
         loop cSessions {
-            ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*", &IAudioSessionControl := 0)
+            ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*", &IAudioSessionControl :=
+                0)
             IAudioSessionControl2 := ComObjQuery(IAudioSessionControl, this.IID_IAudioSessionControl2)
             ObjRelease(IAudioSessionControl)
             ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &pid := 0)
@@ -323,8 +324,8 @@ class Tray {
 
             trayIconIndex := volume = 0 ? trayIconMap.empty
                 : volume < 50 ? trayIconMap.low
-                : volume < 100 ? trayIconMap.high
-                : trayIconMap.full
+                    : volume < 100 ? trayIconMap.high
+                        : trayIconMap.full
         }
 
         TraySetIcon(trayIcon, trayIconIndex)
