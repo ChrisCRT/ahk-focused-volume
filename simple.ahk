@@ -5,54 +5,49 @@ Persistent
 ; A simple version of Focus Volume.ahk without tooltips or the tray menu
 
 Volume_Up:: {
-    App.Volume("+2")
+    AppVol.Up()
 }
 
 Volume_Down:: {
-    App.Volume("-2")
+    AppVol.Down()
 }
 
 Volume_Mute:: {
-    App.Volume("toggle")
+    AppVol.Mute()
 }
 
-App.init()
+DetectHiddenWindows(true)
 
-class App {
-    static init() {
-        DetectHiddenWindows(true)
-        SetTimer(() => AudioManager.InvalidateCache(), 60000)
-    }
-
-    static Volume(level := "+2", target := "A") {
-        volumeState := ""
-
-        appName := Utility.GetAppName(target)
-        if (!appName) {
-            return -1
-        }
-
+class AppVol {
+    static Up(step := 0.02) {
+        appName := WinGetProcessName("A")
         appAudioSession := AudioManager.GetAudioSession(appName)
-        if (!appAudioSession) {
-            return -1
-        }
 
         currentVolume := AudioManager.GetAppVolume(appAudioSession)
+        newVolume := Max(0.0, Min(1.0, currentVolume + step))
 
-        if (level = "toggle") {
-            wasMuted := AudioManager.GetAppState(appAudioSession)
-            AudioManager.SetAppState(appAudioSession, !wasMuted)
-            volumeState := wasMuted ? Round(currentVolume * 100) "%" : "Muted"
-        } else {
-            newVolume := (level ~= "^[+-]")
-                ? Max(0.0, Min(1.0, currentVolume + (Integer(level) / 100)))
-                : Max(0.0, Min(1.0, Integer(level) / 100))
-            AudioManager.SetAppState(appAudioSession, false)
-            AudioManager.SetAppVolume(appAudioSession, newVolume)
-            volumeState := Round(newVolume * 100) "%"
-        }
+        AudioManager.SetAppState(appAudioSession, false)
+        AudioManager.SetAppVolume(appAudioSession, newVolume)
+    }
 
-        return { title: appName, state: volumeState }
+    static Down(step := -0.02) {
+        appName := WinGetProcessName("A")
+        appAudioSession := AudioManager.GetAudioSession(appName)
+
+        currentVolume := AudioManager.GetAppVolume(appAudioSession)
+        newVolume := Max(0.0, Min(1.0, currentVolume + step))
+
+        AudioManager.SetAppState(appAudioSession, false)
+        AudioManager.SetAppVolume(appAudioSession, newVolume)
+    }
+
+    static Mute() {
+        appName := WinGetProcessName("A")
+        appAudioSession := AudioManager.GetAudioSession(appName)
+
+        wasMuted := AudioManager.GetAppState(appAudioSession)
+
+        AudioManager.SetAppState(appAudioSession, !wasMuted)
     }
 }
 
@@ -77,8 +72,34 @@ class AudioManager {
 
     static sessionCache := Map()
 
-    static InvalidateCache() {
-        this.sessionCache.Clear()
+    static GetAudioSession(appName := "") {
+        if (this.sessionCache.Has(appName)) {
+            return this.sessionCache[appName]
+        }
+
+        GUID := Buffer(16)
+        IMMDevice := this.IMMDevice(GUID)
+        IAudioSessionEnumerator := this.IAudioSessionEnumerator(IMMDevice, GUID)
+
+        ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
+
+        loop cSessions {
+            ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*", &IAudioSessionControl :=
+                0)
+            IAudioSessionControl2 := ComObjQuery(IAudioSessionControl, this.IID_IAudioSessionControl2)
+            ObjRelease(IAudioSessionControl)
+            ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &pid := 0)
+
+            if (pid != 0 && ProcessGetName(pid) == appName) {
+                ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
+                ObjRelease(IAudioSessionEnumerator)
+
+                this.sessionCache[appName] := ISimpleAudioVolume
+                return ISimpleAudioVolume
+            }
+        }
+        ObjRelease(IAudioSessionEnumerator)
+        return ""
     }
 
     static GetAppState(appAudioSession) {
@@ -118,50 +139,5 @@ class AudioManager {
         ObjRelease(IAudioSessionManager2)
 
         return IAudioSessionEnumerator
-    }
-
-    static GetAudioSession(appName := "") {
-        if (this.sessionCache.Has(appName)) {
-            return this.sessionCache[appName]
-        }
-
-        GUID := Buffer(16)
-        IMMDevice := this.IMMDevice(GUID)
-        IAudioSessionEnumerator := this.IAudioSessionEnumerator(IMMDevice, GUID)
-
-        ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
-
-        loop cSessions {
-            ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*", &IAudioSessionControl :=
-                0)
-            IAudioSessionControl2 := ComObjQuery(IAudioSessionControl, this.IID_IAudioSessionControl2)
-            ObjRelease(IAudioSessionControl)
-            ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &pid := 0)
-
-            if (pid != 0 && ProcessGetName(pid) == appName) {
-                ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
-                ObjRelease(IAudioSessionEnumerator)
-
-                this.sessionCache[appName] := ISimpleAudioVolume
-                return ISimpleAudioVolume
-            }
-        }
-        ObjRelease(IAudioSessionEnumerator)
-        return ""
-    }
-}
-
-class Utility {
-    static GetAppName(target) {
-        if (SubStr(target, -4) = ".exe") {
-            target := "ahk_exe " target
-        }
-
-        try {
-            appName := WinGetProcessName(target)
-            return appName
-        } catch {
-            return ""
-        }
     }
 }
