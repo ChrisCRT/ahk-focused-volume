@@ -2,7 +2,7 @@
 #SingleInstance Force
 Persistent
 
-SETTINGS := App.ReadSettings()
+SETTINGS := AppVolume.ReadSettings()
 
 STATE := {
     application: SETTINGS.application,
@@ -12,43 +12,26 @@ STATE := {
 ; # is Win, + is Shift, ^ is Ctrl, ! is Alt
 Volume_Up::
 !Volume_Up:: {
-    App.Volume("+2")
+    AppVolume.Set("+2")
 }
 
 Volume_Down::
 !Volume_Down:: {
-    App.Volume("-2")
+    AppVolume.Set("-2")
 }
 
 Volume_Mute:: {
-    App.Volume("toggle")
+    AppVolume.Set("toggle")
 }
 
 !Volume_Mute:: {
-    App.ToggleFocus()
+    AppVolume.ToggleFocus()
 }
 
-App.init()
+AppVolume.init()
 
-class App {
-    static init() {
-        DetectHiddenWindows(true)
-
-        if (!FileExist(SETTINGS.file)) {
-            this.DefaultSettings()
-        }
-
-        Tray.UpdateIcon()
-        Tray.UpdateMenu()
-
-        SetTimer(() => this.HandleFocusChange(), 5000)
-        SetTimer(() => AudioManager.InvalidateCache(), 60000)
-    }
-
-    static Volume(level := "+2", target := STATE.application) {
-        ; Returns object with title (String, window title) and state (String, can be "Muted" or current volume percent)
-        volumeState := ""
-
+class AppVolume {
+    static Set(level := "+2", target := STATE.application) {
         appName := Utility.GetAppName(target)
         if (!appName) {
             return -1
@@ -59,18 +42,19 @@ class App {
             return -1
         }
 
-        currentVolume := AudioManager.GetAppVolume(appAudioSession)
+        currentVolume := AudioManager.GetVolume(appAudioSession)
+        volumeState := ""
 
         if (level = "toggle") {
-            wasMuted := AudioManager.GetAppState(appAudioSession)
-            AudioManager.SetAppState(appAudioSession, !wasMuted)
+            wasMuted := AudioManager.GetState(appAudioSession)
+            AudioManager.SetState(appAudioSession, !wasMuted)
             volumeState := wasMuted ? Round(currentVolume * 100) "%" : "Muted"
         } else {
             newVolume := (level ~= "^[+-]")
                 ? Max(0.0, Min(1.0, currentVolume + (Integer(level) / 100)))
                 : Max(0.0, Min(1.0, Integer(level) / 100))
-            AudioManager.SetAppState(appAudioSession, false)  ; Disable mute
-            AudioManager.SetAppVolume(appAudioSession, newVolume)
+            AudioManager.SetState(appAudioSession, false)  ; Disable mute
+            AudioManager.SetVolume(appAudioSession, newVolume)
             volumeState := Round(newVolume * 100) "%"
         }
 
@@ -87,25 +71,6 @@ class App {
 
         Tray.UpdateIcon(result.state)
         Tray.UpdateMenu(titleFormatted " - " result.state)
-    }
-
-    static HandleFocusChange() {
-        appName := Utility.GetAppName(SETTINGS.application)
-        if (!appName || appName = "explorer.exe") {
-            return
-        }
-
-        session := AudioManager.GetAudioSession(appName)
-        if (!session) {
-            return
-        }
-
-        volume := AudioManager.GetAppVolume(session)
-        muted := AudioManager.GetAppState(session)
-
-        state := muted ? "Muted" : Round(volume * 100) "%"
-
-        Tray.UpdateIcon(state)
     }
 
     static ToggleFocus(target := SETTINGS.focus_application) {
@@ -129,29 +94,6 @@ class App {
         this.HandleAudioResult(result)
     }
 
-    static ToggleTooltips(*) {
-        SETTINGS.enable_tooltips := !SETTINGS.enable_tooltips
-
-        if (SETTINGS.enable_tooltips) {
-            A_TrayMenu.Check("Show &Tooltips")
-        } else {
-            A_TrayMenu.Uncheck("Show &Tooltips")
-        }
-
-        IniWrite(SETTINGS.enable_tooltips ? 1 : 0, SETTINGS.file, "Preferences", "EnableTooltips")
-
-        if (!SETTINGS.enable_tooltips) {
-            ToolTip()
-        }
-    }
-
-    static OpenSettings(*) {
-        if (!FileExist(SETTINGS.file)) {
-            this.DefaultSettings()
-        }
-        Run(SETTINGS.file)
-    }
-
     static DefaultSettings() {
         IniWrite("A", SETTINGS.file, "Preferences", "ApplicationTarget")
         IniWrite("A", SETTINGS.file, "Preferences", "ToggleFocusApplication")
@@ -169,19 +111,26 @@ class App {
         }
     }
 
-    static OpenVolumeMixer(*) {
-        Run("ms-settings:apps-volume")
-    }
+    static init() {
+        DetectHiddenWindows(true)
 
-    static Exit(*) {
-        ExitApp
+        if (!FileExist(SETTINGS.file)) {
+            this.DefaultSettings()
+        }
+
+        Tray.UpdateIcon()
+        Tray.UpdateMenu()
+
+        SetTimer(() => Tray.HandleFocusChange(), 5000)
+        SetTimer(() => AudioManager.InvalidateCache(), 60000)
     }
 
     static Restart(*) {
         Reload
     }
 
-    static DoNothing(*) {
+    static Exit(*) {
+        ExitApp
     }
 }
 
@@ -205,26 +154,25 @@ class AudioManager {
     }
 
     static sessionCache := Map()
-
     static InvalidateCache() {
         this.sessionCache.Clear()
     }
 
-    static GetAppState(appAudioSession) {
+    static GetState(appAudioSession) {
         ComCall(this.COM.GET_MUTE, appAudioSession, "Int*", &state := 0)
         return state
     }
 
-    static SetAppState(appAudioSession, state) {
+    static SetState(appAudioSession, state) {
         ComCall(this.COM.SET_MUTE, appAudioSession, "Int", state, "Ptr", 0)
     }
 
-    static GetAppVolume(appAudioSession) {
+    static GetVolume(appAudioSession) {
         ComCall(this.COM.GET_VOLUME, appAudioSession, "Float*", &currentVolume := 0)
         return currentVolume
     }
 
-    static SetAppVolume(appAudioSession, newVolume) {
+    static SetVolume(appAudioSession, newVolume) {
         ComCall(this.COM.SET_VOLUME, appAudioSession, "Float", newVolume, "Ptr", 0)
     }
 
@@ -261,8 +209,8 @@ class AudioManager {
         ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
 
         loop cSessions {
-            ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*", &IAudioSessionControl :=
-                0)
+            ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*",
+                &IAudioSessionControl := 0)
             IAudioSessionControl2 := ComObjQuery(IAudioSessionControl, this.IID_IAudioSessionControl2)
             ObjRelease(IAudioSessionControl)
             ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &pid := 0)
@@ -335,30 +283,79 @@ class Tray {
         A_TrayMenu.Delete()
 
         if (msg != "") {
-            A_TrayMenu.Add("Last Change: " msg, App.DoNothing)
+            A_TrayMenu.Add("Last Change: " msg, this.DoNothing)
             A_TrayMenu.Add()
         }
 
         if (STATE.toggleFocusActive) {
-            A_TrayMenu.Add("Focus: " Utility.FormatTitleCase(STATE.application), App.DoNothing)
+            A_TrayMenu.Add("Focus: " Utility.FormatTitleCase(STATE.application), this.DoNothing)
             A_TrayMenu.Add()
         }
 
-        A_TrayMenu.Add("Open &Settings", App.OpenSettings)
+        A_TrayMenu.Add("Open &Settings", this.OpenSettings)
 
-        A_TrayMenu.Add("Show &Tooltips", App.ToggleTooltips)
+        A_TrayMenu.Add("Show &Tooltips", this.ToggleTooltips)
         if (SETTINGS.enable_tooltips) {
             A_TrayMenu.Check("Show &Tooltips")
         }
 
         A_TrayMenu.Add()
-        A_TrayMenu.Add("&Volume Mixer", App.OpenVolumeMixer)
+        A_TrayMenu.Add("&Volume Mixer", this.OpenVolumeMixer)
         A_TrayMenu.Add()
 
         if (SETTINGS.debug) {
-            A_TrayMenu.Add("&Reload", App.Restart)
+            A_TrayMenu.Add("&Reload", AppVolume.Restart)
         }
 
-        A_TrayMenu.Add("E&xit", App.Exit)
+        A_TrayMenu.Add("E&xit", AppVolume.Exit)
+    }
+
+    static HandleFocusChange() {
+        appName := Utility.GetAppName(SETTINGS.application)
+        if (!appName || appName = "explorer.exe") {
+            return
+        }
+
+        session := AudioManager.GetAudioSession(appName)
+        if (!session) {
+            return
+        }
+
+        volume := AudioManager.GetVolume(session)
+        muted := AudioManager.GetState(session)
+
+        state := muted ? "Muted" : Round(volume * 100) "%"
+
+        this.UpdateIcon(state)
+    }
+
+    static ToggleTooltips(*) {
+        SETTINGS.enable_tooltips := !SETTINGS.enable_tooltips
+
+        if (SETTINGS.enable_tooltips) {
+            A_TrayMenu.Check("Show &Tooltips")
+        } else {
+            A_TrayMenu.Uncheck("Show &Tooltips")
+        }
+
+        IniWrite(SETTINGS.enable_tooltips ? 1 : 0, SETTINGS.file, "Preferences", "EnableTooltips")
+
+        if (!SETTINGS.enable_tooltips) {
+            ToolTip()
+        }
+    }
+
+    static OpenSettings(*) {
+        if (!FileExist(SETTINGS.file)) {
+            AppVolume.DefaultSettings()
+        }
+        Run(SETTINGS.file)
+    }
+
+    static OpenVolumeMixer(*) {
+        Run("ms-settings:apps-volume")
+    }
+
+    static DoNothing(*) {
     }
 }
