@@ -43,54 +43,54 @@ class AppVolume {
         }
 
         currentVolume := AudioManager.GetVolume(appAudioSession)
-        volumeState := ""
+        volumeStatus := ""
 
         if (level = "toggle") {
-            wasMuted := AudioManager.GetState(appAudioSession)
-            AudioManager.SetState(appAudioSession, !wasMuted)
-            volumeState := wasMuted ? Round(currentVolume * 100) "%" : "Muted"
+            wasMuted := AudioManager.GetMute(appAudioSession)
+            AudioManager.SetMute(appAudioSession, !wasMuted)
+
+            volumeStatus := wasMuted ? String(Round(currentVolume * 100)) "%" : "Muted"
         } else {
             newVolume := (level ~= "^[+-]")
                 ? Max(0.0, Min(1.0, currentVolume + (Integer(level) / 100)))
                 : Max(0.0, Min(1.0, Integer(level) / 100))
-            AudioManager.SetState(appAudioSession, false)  ; Disable mute
+            AudioManager.SetMute(appAudioSession, false)  ; Disable mute
             AudioManager.SetVolume(appAudioSession, newVolume)
-            volumeState := Round(newVolume * 100) "%"
+
+            volumeStatus := String(Round(newVolume * 100)) "%"
         }
 
-        result := { title: appName, state: volumeState }
+        result := { title: appName, status: volumeStatus }
         this.HandleAudioResult(result)
     }
 
-    static HandleAudioResult(result := { title: "", state: "" }) {
+    static HandleAudioResult(result := { title: "", status: "" }) {
         titleFormatted := Utility.FormatTitleCase(result.title)
 
         if (SETTINGS.enable_tooltips) {
-            Utility.CreateToolTip(titleFormatted " - " result.state)
+            Utility.CreateToolTip(titleFormatted, result.status)
         }
 
-        Tray.UpdateIcon(result.state)
-        Tray.UpdateMenu(titleFormatted " - " result.state)
+        Tray.UpdateIcon(result.status)
+        Tray.UpdateMenu(titleFormatted, result.status)
     }
 
     static ToggleFocus(target := SETTINGS.focus_application) {
         focused := Utility.GetAppName(target)
-        focusState := ""
+        focusStatus := ""
 
         if (focused = STATE.application) {
             STATE.application := IniRead(SETTINGS.file, "Preferences", "ApplicationTarget", 1)
             STATE.toggleFocusActive := false
-            focusState := "Unfocused"
+            focusStatus := "Unfocused"
 
         } else {
             STATE.application := focused
             STATE.toggleFocusActive := true
-            focusState := "Focused"
+            focusStatus := "Focused"
         }
 
-        winTitle := Utility.FormatTitleCase(focused)
-
-        result := { title: winTitle, state: focusState }
+        result := { title: focused, status: focusStatus }
         this.HandleAudioResult(result)
     }
 
@@ -158,13 +158,13 @@ class AudioManager {
         this.sessionCache.Clear()
     }
 
-    static GetState(appAudioSession) {
-        ComCall(this.COM.GET_MUTE, appAudioSession, "Int*", &state := 0)
-        return state
+    static GetMute(appAudioSession) {
+        ComCall(this.COM.GET_MUTE, appAudioSession, "Int*", &muteStatus := 0)
+        return muteStatus
     }
 
-    static SetState(appAudioSession, state) {
-        ComCall(this.COM.SET_MUTE, appAudioSession, "Int", state, "Ptr", 0)
+    static SetMute(appAudioSession, muteStatus) {
+        ComCall(this.COM.SET_MUTE, appAudioSession, "Int", muteStatus, "Ptr", 0)
     }
 
     static GetVolume(appAudioSession) {
@@ -242,8 +242,8 @@ class Utility {
         }
     }
 
-    static CreateToolTip(msg) {
-        ToolTip(msg)
+    static CreateToolTip(title := "", status := "") {
+        ToolTip(title " - " status)
         SetTimer(() => ToolTip(), -1000)
     }
 
@@ -254,7 +254,7 @@ class Utility {
 }
 
 class Tray {
-    static UpdateIcon(state := "") {
+    static UpdateIcon(status := "") {
         trayIcon := A_WinDir . "\System32\SndVolSSO.dll"
         trayIconMap := {
             muted: 2,
@@ -265,10 +265,10 @@ class Tray {
         }
         trayIconIndex := trayIconMap.full
 
-        if (state = "Muted") {
+        if (status = "Muted") {
             trayIconIndex := trayIconMap.muted
-        } else if (SubStr(state, -1) = "%") {
-            volume := Integer(StrReplace(state, "%"))
+        } else if (SubStr(status, -1) = "%") {
+            volume := Integer(StrReplace(status, "%"))
 
             trayIconIndex := volume = 0 ? trayIconMap.empty
                 : volume < 50 ? trayIconMap.low
@@ -279,16 +279,16 @@ class Tray {
         TraySetIcon(trayIcon, trayIconIndex)
     }
 
-    static UpdateMenu(msg := "") {
+    static UpdateMenu(title := "", status := "") {
         A_TrayMenu.Delete()
 
-        if (msg != "") {
-            A_TrayMenu.Add("Last Change: " msg, this.DoNothing)
+        if (title != "") {
+            A_TrayMenu.Add("Last Change: " title " - " status, this.DoNothing)
             A_TrayMenu.Add()
         }
 
         if (STATE.toggleFocusActive) {
-            A_TrayMenu.Add("Focus: " Utility.FormatTitleCase(STATE.application), this.DoNothing)
+            A_TrayMenu.Add("Focus: " title, this.DoNothing)
             A_TrayMenu.Add()
         }
 
@@ -322,11 +322,11 @@ class Tray {
         }
 
         volume := AudioManager.GetVolume(session)
-        muted := AudioManager.GetState(session)
+        muted := AudioManager.GetMute(session)
 
-        state := muted ? "Muted" : Round(volume * 100) "%"
+        status := muted ? "Muted" : Round(volume * 100) "%"
 
-        this.UpdateIcon(state)
+        this.UpdateIcon(status)
     }
 
     static ToggleTooltips(*) {
