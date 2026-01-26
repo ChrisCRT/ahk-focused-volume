@@ -37,10 +37,10 @@ AppVol(target := "A", level := 0) {
     if (!appAudioSession) {
         return -1
     }
-    isMuted := AudioManager.GetState(appAudioSession)
+    isMuted := AudioManager.GetMute(appAudioSession)
 
     if (isMuted || !level) {
-        AudioManager.SetState(appAudioSession, !isMuted)
+        AudioManager.SetMute(appAudioSession, !isMuted)
     }
 
     if (level) {
@@ -84,13 +84,13 @@ class AudioManager {
         this.sessionCache.Clear()
     }
 
-    static GetState(appAudioSession) {
-        ComCall(this.COM.GET_MUTE, appAudioSession, "Int*", &state := 0)
-        return state
+    static GetMute(appAudioSession) {
+        ComCall(this.COM.GET_MUTE, appAudioSession, "Int*", &muteStatus := 0)
+        return muteStatus
     }
 
-    static SetState(appAudioSession, state) {
-        ComCall(this.COM.SET_MUTE, appAudioSession, "Int", state, "Ptr", 0)
+    static SetMute(appAudioSession, muteStatus) {
+        ComCall(this.COM.SET_MUTE, appAudioSession, "Int", muteStatus, "Ptr", 0)
     }
 
     static GetVolume(appAudioSession) {
