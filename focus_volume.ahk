@@ -32,12 +32,15 @@ AppVolume.init()
 
 class AppVolume {
     static Set(level := "+2", target := STATE.application) {
-        appName := Utility.GetAppName(target)
-        if (!appName) {
+        hwnd := target = "A" ? target : WinActive(target)
+        if (!hwnd) {
             return -1
         }
 
-        appAudioSession := AudioManager.GetAudioSession(appName)
+        appName := Utility.GetAppName(hwnd)
+        appTitle := WinGetTitle(hwnd)
+
+        appAudioSession := AudioManager.GetAudioSession(hwnd, appName, appTitle)
         if (!appAudioSession) {
             return -1
         }
@@ -60,7 +63,7 @@ class AppVolume {
             volumeStatus := String(Round(newVolume * 100)) "%"
         }
 
-        result := { title: appName, status: volumeStatus }
+        result := { title: appTitle, status: volumeStatus }
         this.HandleAudioResult(result)
     }
 
@@ -197,9 +200,15 @@ class AudioManager {
         return IAudioSessionEnumerator
     }
 
-    static GetAudioSession(appName := "") {
-        if (this.sessionCache.Has(appName)) {
-            return this.sessionCache[appName]
+    static GetAudioSession(hwnd := "", appName := "", appTitle := "") {
+        appPID := WinGetPID(hwnd)
+        if (!appPID) {
+            return ""
+        }
+
+        cacheKey := appPID appTitle
+        if (this.sessionCache.Has(cacheKey)) {
+            return this.sessionCache[cacheKey]
         }
 
         GUID := Buffer(16)
@@ -207,24 +216,36 @@ class AudioManager {
         IAudioSessionEnumerator := this.IAudioSessionEnumerator(IMMDevice, GUID)
 
         ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
-
+        fallbackSession := 0
         loop cSessions {
             ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*",
                 &IAudioSessionControl := 0)
             IAudioSessionControl2 := ComObjQuery(IAudioSessionControl, this.IID_IAudioSessionControl2)
             ObjRelease(IAudioSessionControl)
-            ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &pid := 0)
 
-            if (pid != 0 && ProcessGetName(pid) == appName) {
+            ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &sessionPID := 0)
+            if (!sessionPID) {
+                continue
+            }
+
+            sessionTitle := ""
+            try sessionTitle := WinGetTitle("ahk_pid " sessionPID)
+
+            if (sessionPID != 0 && sessionPID == appPID && sessionTitle == appTitle) {
                 ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
                 ObjRelease(IAudioSessionEnumerator)
 
-                this.sessionCache[appName] := ISimpleAudioVolume
+                this.sessionCache[cacheKey] := ISimpleAudioVolume
                 return ISimpleAudioVolume
+            }
+
+            if (!fallbackSession && ProcessGetName(sessionPID) == appName) {
+                fallbackSession := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
             }
         }
         ObjRelease(IAudioSessionEnumerator)
-        return ""
+        this.sessionCache[cacheKey] := fallbackSession
+        return fallbackSession
     }
 }
 
@@ -311,18 +332,25 @@ class Tray {
     }
 
     static HandleFocusChange() {
-        appName := Utility.GetAppName(SETTINGS.application)
+        target := SETTINGS.application
+        hwnd := target = "A" ? target : WinActive(target)
+        if (!hwnd) {
+            return
+        }
+
+        appName := Utility.GetAppName(hwnd)
         if (!appName || appName = "explorer.exe") {
             return
         }
+        appTitle := WinGetTitle(hwnd)
 
-        session := AudioManager.GetAudioSession(appName)
-        if (!session) {
+        appAudioSession := AudioManager.GetAudioSession(hwnd, appName, appTitle)
+        if (!appAudioSession) {
             return
         }
 
-        volume := AudioManager.GetVolume(session)
-        muted := AudioManager.GetMute(session)
+        volume := AudioManager.GetVolume(appAudioSession)
+        muted := AudioManager.GetMute(appAudioSession)
 
         status := muted ? "Muted" : Round(volume * 100) "%"
 
