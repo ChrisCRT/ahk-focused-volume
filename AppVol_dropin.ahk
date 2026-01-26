@@ -3,37 +3,47 @@
 Persistent
 DetectHiddenWindows(true)
 SetTimer(() => AudioManager.InvalidateCache(), 60000)
-
-; Drop-in replacement for AppVol by anonymous1184
-; Example usage:
-;  1:: AppVol() ; Toggle Mute
-;  2:: AppVol("-2") ; Decrease volume 2%
-;  3:: AppVol("+2") ; Increase volume 2%
-;  4:: AppVol("50") ; Set volume to 50%
-;  5:: AppVol("100") ; Set volume to 100%
-; By executable name:
-;  +1::AppVol("firefox.exe") ; Toggle Mute
-;  +2::AppVol("firefox.exe", "-2") ; Decrease volume 2%
-;  +3::AppVol("firefox.exe", "+2") ; Increase volume 2%
-;  +4::AppVol("firefox.exe", "50") ; Set volume to 50%
-;  +5::AppVol("firefox.exe", "100") ; Set volume to 100%
-; By window title
-;  ^1::AppVol("Picture-in-Picture") ; Toggle Mute
-;  ^2::AppVol("Picture-in-Picture", "-2") ; Decrease volume 2%
-;  ^3::AppVol("Picture-in-Picture", "+2") ; Increase volume 2%
-;  ^4::AppVol("Picture-in-Picture", "50") ; Set volume to 50%
-;  ^5::AppVol("Picture-in-Picture", "100") ; Set volume to 100%
+/*
+Drop-in replacement for AppVol by anonymous1184
+Fixes a memory leak, adds support for multiple app instances
+Example usage:
+    1:: AppVol() ; Toggle Mute
+    2:: AppVol("-2") ; Decrease volume 2%
+    3:: AppVol("+2") ; Increase volume 2%
+    4:: AppVol("50") ; Set volume to 50%
+    5:: AppVol("100") ; Set volume to 100%
+By executable name:
+    +1::AppVol("firefox.exe") ; Toggle Mute
+    +2::AppVol("firefox.exe", "-2") ; Decrease volume 2%
+    +3::AppVol("firefox.exe", "+2") ; Increase volume 2%
+    +4::AppVol("firefox.exe", "50") ; Set volume to 50%
+    +5::AppVol("firefox.exe", "100") ; Set volume to 100%
+By window title
+    ^1::AppVol("Picture-in-Picture") ; Toggle Mute
+    ^2::AppVol("Picture-in-Picture", "-2") ; Decrease volume 2%
+    ^3::AppVol("Picture-in-Picture", "+2") ; Increase volume 2%
+    ^4::AppVol("Picture-in-Picture", "50") ; Set volume to 50%
+    ^5::AppVol("Picture-in-Picture", "100") ; Set volume to 100%
+*/
 
 AppVol(target := "A", level := 0) {
     if (target ~= "^[-+]?\d+$") {
         level := target
-        target := "A"
+        hwnd := WinActive("A")
     } else if (SubStr(target, -4) = ".exe") {
-        target := "ahk_exe " target
+        hwnd := WinActive("ahk_exe " target)
+        || WinExist("ahk_exe " target)
+    } else {
+        hwnd := WinActive("A")
     }
-    appName := WinGetProcessName(target)
+    if (!hwnd) {
+        return -1
+    }
 
-    appAudioSession := AudioManager.GetAudioSession(appName)
+    appName := WinGetProcessName("ahk_id " hwnd)
+    appTitle := WinGetTitle("ahk_id " hwnd)
+
+    appAudioSession := AudioManager.GetAudioSession(hwnd, appName, appTitle)
     if (!appAudioSession) {
         return -1
     }
@@ -123,9 +133,15 @@ class AudioManager {
         return IAudioSessionEnumerator
     }
 
-    static GetAudioSession(appName := "") {
-        if (this.sessionCache.Has(appName)) {
-            return this.sessionCache[appName]
+    static GetAudioSession(hwnd := "", appName := "", appTitle := "") {
+        appPID := WinGetPID(hwnd)
+        if (!appPID) {
+            return ""
+        }
+
+        cacheKey := appPID appTitle
+        if (this.sessionCache.Has(cacheKey)) {
+            return this.sessionCache[cacheKey]
         }
 
         GUID := Buffer(16)
@@ -133,23 +149,35 @@ class AudioManager {
         IAudioSessionEnumerator := this.IAudioSessionEnumerator(IMMDevice, GUID)
 
         ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
-
+        fallbackSession := 0
         loop cSessions {
             ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*",
                 &IAudioSessionControl := 0)
             IAudioSessionControl2 := ComObjQuery(IAudioSessionControl, this.IID_IAudioSessionControl2)
             ObjRelease(IAudioSessionControl)
-            ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &pid := 0)
 
-            if (pid != 0 && ProcessGetName(pid) == appName) {
+            ComCall(this.COM.GET_PID, IAudioSessionControl2, "UInt*", &sessionPID := 0)
+            if (!sessionPID) {
+                continue
+            }
+
+            sessionTitle := ""
+            try sessionTitle := WinGetTitle("ahk_pid " sessionPID)
+
+            if (sessionPID != 0 && sessionPID == appPID && sessionTitle == appTitle) {
                 ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
                 ObjRelease(IAudioSessionEnumerator)
 
-                this.sessionCache[appName] := ISimpleAudioVolume
+                this.sessionCache[cacheKey] := ISimpleAudioVolume
                 return ISimpleAudioVolume
+            }
+
+            if (!fallbackSession && ProcessGetName(sessionPID) == appName) {
+                fallbackSession := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
             }
         }
         ObjRelease(IAudioSessionEnumerator)
-        return ""
+        this.sessionCache[cacheKey] := fallbackSession
+        return fallbackSession
     }
 }
