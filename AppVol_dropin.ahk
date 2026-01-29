@@ -126,7 +126,7 @@ class AudioManager {
         ComCall(this.COM.ACTIVATE, IMMDevice, "Ptr", GUID, "UInt", 23, "Ptr", 0, "Ptr*", &IAudioSessionManager2 := 0)
         ObjRelease(IMMDevice)
 
-        ComCall(this.COM.GET_SESSION_ENUMERATOR, IAudioSessionManager2, "Ptr*", &IAudioSessionEnumerator := 0) ||
+        ComCall(this.COM.GET_SESSION_ENUMERATOR, IAudioSessionManager2, "Ptr*", &IAudioSessionEnumerator := 0) or
         DllCall("SetLastError", "UInt", 0)
         ObjRelease(IAudioSessionManager2)
 
@@ -139,9 +139,8 @@ class AudioManager {
             return ""
         }
 
-        cacheKey := appPID appTitle
-        if (this.sessionCache.Has(cacheKey)) {
-            return this.sessionCache[cacheKey]
+        if (this.sessionCache.Has(appPID)) {
+            return this.sessionCache[appPID]
         }
 
         GUID := Buffer(16)
@@ -150,6 +149,7 @@ class AudioManager {
 
         ComCall(this.COM.GET_SESSION_COUNT, IAudioSessionEnumerator, "UInt*", &cSessions := 0)
         fallbackSession := 0
+
         loop cSessions {
             ComCall(this.COM.GET_SESSION, IAudioSessionEnumerator, "Int", A_Index - 1, "Ptr*",
                 &IAudioSessionControl := 0)
@@ -161,23 +161,30 @@ class AudioManager {
                 continue
             }
 
-            sessionTitle := ""
-            try sessionTitle := WinGetTitle("ahk_pid " sessionPID)
+            if (sessionPID != 0 and sessionPID = appPID) {
+                sessionTitle := ""
+                try sessionTitle := WinGetTitle("ahk_pid " sessionPID)
 
-            if (sessionPID != 0 && sessionPID == appPID && sessionTitle == appTitle) {
-                ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
-                ObjRelease(IAudioSessionEnumerator)
+                if (sessionTitle = appTitle) {
+                    ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
+                    ObjRelease(IAudioSessionEnumerator)
 
-                this.sessionCache[cacheKey] := ISimpleAudioVolume
-                return ISimpleAudioVolume
+                    this.sessionCache[appPID] := ISimpleAudioVolume
+                    return ISimpleAudioVolume
+                }
             }
 
-            if (!fallbackSession && ProcessGetName(sessionPID) == appName) {
-                fallbackSession := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
+            if (!fallbackSession) {
+                processName := ""
+                try processName := ProcessGetName(sessionPID)
+
+                if (processName = appName) {
+                    fallbackSession := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
+                }
             }
         }
         ObjRelease(IAudioSessionEnumerator)
-        this.sessionCache[cacheKey] := fallbackSession
+        this.sessionCache[appPID] := fallbackSession
         return fallbackSession
     }
 }
