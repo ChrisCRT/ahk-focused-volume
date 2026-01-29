@@ -31,25 +31,22 @@ AppVol(target := "A", level := 0) {
         level := target
         hwnd := WinActive("A")
     } else if (SubStr(target, -4) = ".exe") {
-        hwnd := WinActive("ahk_exe " target)
-        || WinExist("ahk_exe " target)
+        hwnd := WinExist("ahk_exe " target)
     } else {
-        hwnd := WinActive("A")
+        hwnd := WinExist(target)
     }
     if (!hwnd) {
         return -1
     }
 
-    appName := WinGetProcessName("ahk_id " hwnd)
-    appTitle := WinGetTitle("ahk_id " hwnd)
-
-    appAudioSession := AudioManager.GetAudioSession(hwnd, appName, appTitle)
+    appAudioSession := AudioManager.GetAudioSession(hwnd)
     if (!appAudioSession) {
         return -1
     }
+
     isMuted := AudioManager.GetMute(appAudioSession)
 
-    if (isMuted || !level) {
+    if (isMuted or !level) {
         AudioManager.SetMute(appAudioSession, !isMuted)
     }
 
@@ -133,10 +130,10 @@ class AudioManager {
         return IAudioSessionEnumerator
     }
 
-    static GetAudioSession(hwnd := "", appName := "", appTitle := "") {
+    static GetAudioSession(hwnd := "") {
         appPID := WinGetPID(hwnd)
         if (!appPID) {
-            return ""
+            return 0
         }
 
         if (this.sessionCache.Has(appPID)) {
@@ -162,23 +159,21 @@ class AudioManager {
             }
 
             if (sessionPID != 0 and sessionPID = appPID) {
-                sessionTitle := ""
-                try sessionTitle := WinGetTitle("ahk_pid " sessionPID)
+                ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
+                ObjRelease(IAudioSessionEnumerator)
 
-                if (sessionTitle = appTitle) {
-                    ISimpleAudioVolume := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
-                    ObjRelease(IAudioSessionEnumerator)
-
-                    this.sessionCache[appPID] := ISimpleAudioVolume
-                    return ISimpleAudioVolume
-                }
+                this.sessionCache[appPID] := ISimpleAudioVolume
+                return ISimpleAudioVolume
             }
 
             if (!fallbackSession) {
-                processName := ""
-                try processName := ProcessGetName(sessionPID)
+                sessionName := ""
+                try sessionName := ProcessGetName(sessionPID)
 
-                if (processName = appName) {
+                appName := ""
+                try appName := ProcessGetName(appPID)
+
+                if (sessionName = appName) {
                     fallbackSession := ComObjQuery(IAudioSessionControl2, this.IID_ISimpleAudioVolume)
                 }
             }
