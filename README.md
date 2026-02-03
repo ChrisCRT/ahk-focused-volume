@@ -3,6 +3,9 @@
 Control volume mixer using your volume keys, targeting the currently focused window.
 
 Code based on [AppVol.ahk v2 by anonymous1184](https://gist.github.com/anonymous1184/b251cd8407a379d4965791585887cfce#file-appvol-ahk)
+- *"focus_volume.ahk":* Script allows you to use volume keys to control the vocused application
+- *"AppVol_droppin.ahk":* drop-in replacement file for existing AppVol.ahk scripts, fixes a memory leak and adds support for multiple of the same app
+- *"AudioManager.ahk":* based on AppVol, updated with JSDoc comments and segmented to be more readable
 
 ## Features
 
