@@ -1,3 +1,7 @@
+#Requires AutoHotkey v2
+#SingleInstance Force
+Persistent
+
 /**
  * Windows audio session control
  * @class AudioManager
