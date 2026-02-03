@@ -39,7 +39,7 @@ Holding shift or control lets you control system volume like normal
 ## AudioManager.ahk
 Based on AppVol, updated with JSDoc comments and segmented to be more readable
 ### Example usage
-```
+```ahk
 audioSession := AudioManager.GetAudioSession("ahk_exe chrome.exe")
 muteStatus := AudioManager.GetMute(audioSession) ; returns 0 for unmuted, 1 for muted
 AudioManager.SetMute(audioSession, 1) ; 0 for unmuted, 1 for muted
@@ -51,7 +51,7 @@ AudioManager.SetVolume(audioSession, 0.32) ; set to 32%
 Drop-in replacement file for existing AppVol.ahk (v2) scripts, fixes a memory leak, adds support for multiple of the same app, and adds documentation for your editor.
 ### Example usage
 replace `#include AppVol.ahk` with `#include AppVol_droppin.ahk` in your existing script
-```
+```ahk
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #Include AppVol_droppin.ahk
