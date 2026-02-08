@@ -50,6 +50,7 @@ class AppVolume {
 
         appAudioSession := AudioManager.GetAudioSession("ahk_id " hwnd)
         if (!appAudioSession) {
+            this.HandleAudioResult("", "No App Audio Found")
             return -1
         }
 
@@ -60,21 +61,21 @@ class AppVolume {
             wasMuted := AudioManager.GetMute(appAudioSession)
             AudioManager.SetMute(appAudioSession, !wasMuted)
 
-            volumeStatus := wasMuted ? String(Round(currentVolume * 100)) "%" : "Muted"
+            volumeStatus := wasMuted ? Round(currentVolume * 100) "%" : "Muted"
         } else {
             newVolume := (level ~= "^[+-]")
                 ? Max(0.0, Min(1.0, currentVolume + (Integer(level) / 100)))
                 : Max(0.0, Min(1.0, Integer(level) / 100))
+
             AudioManager.SetMute(appAudioSession, false)  ; Disable mute
             AudioManager.SetVolume(appAudioSession, newVolume)
 
-            volumeStatus := String(Round(newVolume * 100)) "%"
+            volumeStatus := Round(newVolume * 100) "%"
         }
 
         appName := Utility.GetAppName("ahk_id " hwnd)
 
-        result := { title: appName, status: volumeStatus }
-        this.HandleAudioResult(result)
+        this.HandleAudioResult(appName, volumeStatus)
     }
 
     /**
@@ -94,22 +95,23 @@ class AppVolume {
         }
 
         currentVolume := AudioManager.GetVolume(appAudioSession)
-        return Round(Float(currentVolume) * 100) "%"
+        return Round(currentVolume * 100) "%"
     }
 
     /**
      * Updates tray icon, tray menu and optionally create tooltips
-     * @param {Object} [result={ title: "", status: "" }] contains {title: {String}, status: {String}}
+     * @param {String} [title=""] target of the result
+     * @param {String} [status=""] status of the result
      */
-    static HandleAudioResult(result := { title: "", status: "" }) {
-        titleFormatted := Utility.FormatTitleCase(result.title)
+    static HandleAudioResult(title := "", status := "") {
+        titleFormatted := Utility.FormatTitleCase(title)
 
         if (SETTINGS.enable_tooltips) {
-            Utility.CreateToolTip(titleFormatted, result.status)
+            Utility.CreateToolTip(titleFormatted, status)
         }
 
-        Tray.UpdateIcon(result.status)
-        Tray.UpdateMenu(titleFormatted, result.status)
+        Tray.UpdateIcon(status)
+        Tray.UpdateMenu(titleFormatted, status)
     }
 
     /**
@@ -138,8 +140,7 @@ class AppVolume {
             targetStatus := "Focused"
         }
 
-        result := { title: targetName, status: targetStatus }
-        this.HandleAudioResult(result)
+        this.HandleAudioResult(targetName, targetStatus)
     }
 
     /**
@@ -172,6 +173,8 @@ class AppVolume {
     static init() {
         DetectHiddenWindows(true)
 
+        AudioManager.IMMDevice_ERole := 2 ; voice coms priority over media, for apps like discord
+
         if (!FileExist(SETTINGS.file)) {
             this.DefaultSettings()
         }
@@ -180,7 +183,6 @@ class AppVolume {
         Tray.UpdateMenu()
 
         SetTimer(() => Tray.HandleFocusChange(), 5000)
-        SetTimer(() => AudioManager.InvalidateCache(), 60000)
     }
 
     static Restart(*) {
@@ -240,7 +242,12 @@ class Utility {
      * @param {String} status Volume status
      */
     static CreateToolTip(title := "", status := "") {
-        ToolTip(title " - " status)
+        ToolTip(
+            (title ? title : "")
+            (title and status ? " - " : "")
+            (status ? status : "")
+        )
+
         SetTimer(() => ToolTip(), -1000)
     }
 
@@ -293,12 +300,18 @@ class Tray {
     static UpdateMenu(title := "", status := "") {
         A_TrayMenu.Delete()
 
-        if (title != "") {
-            A_TrayMenu.Add("Last Change: " title " - " status, this.DoNothing)
+        if (title != "" or status != "") {
+            A_TrayMenu.Add(
+                "Last Change: "
+                (title ? title : "")
+                (title and status ? " - " : "")
+                (status ? status : ""),
+                this.DoNothing
+            )
             A_TrayMenu.Add()
         }
 
-        if (STATE.toggleFocusActive) {
+        if (STATE.toggleFocusActive and title != "") {
             A_TrayMenu.Add("Focus: " title, this.ToggleFocusMenuItem)
             A_TrayMenu.Add()
         }
@@ -328,17 +341,17 @@ class Tray {
         target := STATE.application
         hwnd := Utility.GetAppHWND(target)
         if (!hwnd) {
-            return
+            return -1
         }
 
         appName := Utility.GetAppName("ahk_id " hwnd)
         if (!appName or appName = "explorer.exe") {
-            return
+            return -1
         }
 
         appAudioSession := AudioManager.GetAudioSession("ahk_id " hwnd)
         if (!appAudioSession) {
-            return
+            return -1
         }
 
         volume := AudioManager.GetVolume(appAudioSession)
