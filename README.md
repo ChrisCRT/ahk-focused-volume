@@ -21,31 +21,9 @@ Allows you to use volume keys to control the vocused application
 | `Volume Up` | Increase volume of focused app by 2% |
 | `Volume Down` | Decrease volume of focused app by 2% |
 | `Volume Mute` | Mute / unmute focused app |
-| `Alt + Volume Mute` | Toggle focus lock on the current app |
+| `Alt + Volume Mute` | Lock volume control on the current focused app |
 
 Holding shift or control lets you control system volume like normal
-
-### Requirements
-
-- Windows 10 / 11, older versions may work
-- AutoHotkey v2
-
-### Installation
-
-1. Install [AutoHotkey](https://www.autohotkey.com/) v2
-2. Clone or download this repository (Specifically focus_volume.ahk and AudioManager.ahk)
-3. Run focus_volume.ahk
-
-## AudioManager.ahk
-Based on AppVol, updated with JSDoc comments and segmented to be more readable
-### Example usage
-```ahk
-audioSession := AudioManager.GetAudioSession("ahk_exe chrome.exe")
-muteStatus := AudioManager.GetMute(audioSession) ; returns 0 for unmuted, 1 for muted
-AudioManager.SetMute(audioSession, 1) ; 0 for unmuted, 1 for muted
-volume := AudioManager.GetVolume(audioSession) ; returns 0.0 to 1.0
-AudioManager.SetVolume(audioSession, 0.32) ; set to 32%
-```
 
 ## AppVol_droppin.ahk
 Drop-in replacement file for existing AppVol.ahk (v2) scripts, fixes a memory leak, adds support for multiple of the same app, and adds documentation for your editor.
