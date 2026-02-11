@@ -1,46 +1,47 @@
 #Requires AutoHotkey v2
 #SingleInstance Force
-#Include AudioManager.ahk
-Persistent
+#Include Audio.ahk
+Persistent true
+KeyHistory false
+ListLines false
 
 ; # is Win, + is Shift, ^ is Ctrl, ! is Alt
 Volume_Up::
 !Volume_Up:: {
-    AppVolume.Set("+2")
+    FocusVolume.Set("+2")
 }
 
 Volume_Down::
 !Volume_Down:: {
-    AppVolume.Set("-2")
+    FocusVolume.Set("-2")
 }
 
 Volume_Mute:: {
-    AppVolume.Set("toggle")
+    FocusVolume.Set("toggle")
 }
 
 !Volume_Mute:: {
-    AppVolume.ToggleFocus()
+    FocusVolume.LockFocus()
 }
 
-SETTINGS := AppVolume.ReadSettings()
+SETTINGS := FocusVolume.ReadSettings()
 STATE := {
     application: SETTINGS.application,
-    toggleFocusActive: false
+    LockFocusActive: false
 }
-AppVolume.init()
+FocusVolume.init()
 
 /**
  * Manages volume control for applications
- * @class AppVolume
+ * @class FocusVolume
  * @property Set Sets volume or toggles mute for the target app
- * @property Get Get volume for target app
  */
-class AppVolume {
+class FocusVolume {
     /**
      * Sets volume or toggles mute for the target app
      * @param {String} [level="+2"] "+/-n", "n", or "toggle"
      * @param {String} [target=STATE.application] Window title / HWND / WinTitle-compatible identifier, ('A'|'ahk_exe '|'ahk_class '|'ahk_id '|'ahk_pid '|'ahk_group ')
-     * @example AppVolume.Set("100", "A")
+     * @example FocusVolume.Set("100", "A")
      */
     static Set(level := "+2", target := STATE.application) {
         hwnd := Utility.GetAppHWND(target)
@@ -48,18 +49,26 @@ class AppVolume {
             return -1
         }
 
-        appAudioSession := AudioManager.GetAudioSession("ahk_id " hwnd)
-        if (!appAudioSession) {
-            this.HandleAudioResult("", "No App Audio Found")
-            return -1
+        if (this.Cache.Has(hwnd) and (A_TickCount - this.Cache[hwnd].created < 30000)) {
+            cached := this.Cache[hwnd]
+            appAudioSession := cached.session
+            appName := cached.name
+        } else {
+            appAudioSession := this.GetAudioSession("ahk_id " hwnd)
+            if (!appAudioSession) {
+                this.HandleAudioResult("", "No App Audio Found")
+                return -1
+            }
+
+            appName := Utility.GetAppName("ahk_id " hwnd)
         }
 
-        currentVolume := AudioManager.GetVolume(appAudioSession)
+        currentVolume := appAudioSession.GetMasterVolume()
         volumeStatus := ""
 
         if (level = "toggle") {
-            wasMuted := AudioManager.GetMute(appAudioSession)
-            AudioManager.SetMute(appAudioSession, !wasMuted)
+            wasMuted := appAudioSession.GetMute()
+            appAudioSession.SetMute(!wasMuted)
 
             volumeStatus := wasMuted ? Round(currentVolume * 100) "%" : "Muted"
         } else {
@@ -67,35 +76,45 @@ class AppVolume {
                 ? Max(0.0, Min(1.0, currentVolume + (Integer(level) / 100)))
                 : Max(0.0, Min(1.0, Integer(level) / 100))
 
-            AudioManager.SetMute(appAudioSession, false)  ; Disable mute
-            AudioManager.SetVolume(appAudioSession, newVolume)
+            appAudioSession.SetMute(false)  ; Disable mute
+            appAudioSession.SetMasterVolume(newVolume)
 
             volumeStatus := Round(newVolume * 100) "%"
         }
 
-        appName := Utility.GetAppName("ahk_id " hwnd)
+        this.Cache[hwnd] := {
+            session: appAudioSession,
+            name: Utility.GetAppName("ahk_id " hwnd),
+            created: A_TickCount
+        }
 
         this.HandleAudioResult(appName, volumeStatus)
     }
 
-    /**
-     * Get volume for target app
-     * @param {String} [target=STATE.application] Window title / HWND / WinTitle-compatible identifier, ('A'|'ahk_exe '|'ahk_class '|'ahk_id '|'ahk_pid '|'ahk_group ')
-     * @example AppVolume.Get("A")
-     */
-    static Get(target := STATE.application) {
-        hwnd := Utility.GetAppHWND(target)
-        if (!hwnd) {
-            return -1
+    static Cache := Map()
+
+    static GetAudioSession(target) {
+        pid := WinGetPID(target)
+        sessionEnumerator := IMMDeviceEnumerator().GetDefaultAudioEndpoint().Activate(IAudioSessionManager2).GetSessionEnumerator()
+        processName := ProcessGetName(pid)
+        failover := 0
+
+        loop sessionEnumerator.GetCount() {
+            sessionControl := sessionEnumerator.GetSession(A_Index - 1).QueryInterface(IAudioSessionControl2)
+            if (sessionControl.GetProcessId() = pid) {
+                return sessionControl.QueryInterface(ISimpleAudioVolume)
+            }
+
+            if (!failover) {
+                try sessionName := ProcessGetName(sessionControl.GetProcessId())
+                if (IsSet(sessionName) and sessionName = processName) {
+                    failover := sessionControl.QueryInterface(ISimpleAudioVolume)
+                }
+            }
+
         }
 
-        appAudioSession := AudioManager.GetAudioSession("ahk_id " hwnd)
-        if (!appAudioSession) {
-            return -1
-        }
-
-        currentVolume := AudioManager.GetVolume(appAudioSession)
-        return Round(currentVolume * 100) "%"
+        return failover
     }
 
     /**
@@ -104,39 +123,37 @@ class AppVolume {
      * @param {String} [status=""] status of the result
      */
     static HandleAudioResult(title := "", status := "") {
-        titleFormatted := Utility.FormatTitleCase(title)
-
         if (SETTINGS.enable_tooltips) {
-            Utility.CreateToolTip(titleFormatted, status)
+            Utility.CreateToolTip(title, status)
         }
 
         Tray.UpdateIcon(status)
-        Tray.UpdateMenu(titleFormatted, status)
+        Tray.UpdateMenu(title, status)
     }
 
     /**
      * Toggles focus to a different application for volume control
      * @param {String} [target=SETTINGS.focus_application] Window title / HWND / WinTitle-compatible identifier, ('A'|'ahk_exe '|'ahk_class '|'ahk_id '|'ahk_pid '|'ahk_group ')
      */
-    static ToggleFocus(target := SETTINGS.focus_application) {
+    static LockFocus(target := SETTINGS.focus_application) {
         targetHWND := Utility.GetAppHWND(target)
         stateHWND := Utility.GetAppHWND(STATE.application)
 
-        targetName := Utility.GetAppName("ahk_id " targetHWND)
+        targetName := WinGetProcessName("ahk_id " targetHWND)
         if (!targetName or targetName = "explorer.exe") {
             return
         }
 
         targetStatus := ""
 
-        if (targetHWND = stateHWND and STATE.toggleFocusActive) {
+        if (targetHWND = stateHWND and STATE.LockFocusActive) {
             STATE.application := SETTINGS.application
-            STATE.toggleFocusActive := false
+            STATE.LockFocusActive := false
             targetStatus := "Unfocused"
 
         } else {
             STATE.application := "ahk_id " targetHWND
-            STATE.toggleFocusActive := true
+            STATE.LockFocusActive := true
             targetStatus := "Focused"
         }
 
@@ -148,7 +165,7 @@ class AppVolume {
      */
     static DefaultSettings() {
         IniWrite("A", SETTINGS.file, "Preferences", "ApplicationTarget")
-        IniWrite("A", SETTINGS.file, "Preferences", "ToggleFocusApplication")
+        IniWrite("A", SETTINGS.file, "Preferences", "LockFocusApplication")
         IniWrite(1, SETTINGS.file, "Preferences", "EnableTooltips")
     }
 
@@ -161,19 +178,17 @@ class AppVolume {
         return {
             file: settingsFile,
             application: IniRead(settingsFile, "Preferences", "ApplicationTarget", "A"),
-            focus_application: IniRead(settingsFile, "Preferences", "ToggleFocusApplication", "A"),
+            focus_application: IniRead(settingsFile, "Preferences", "LockFocusApplication", "A"),
             enable_tooltips: !!IniRead(settingsFile, "Preferences", "EnableTooltips", 1),
             debug: false,
         }
     }
 
     /**
-     * Initializes the AppVolume class, sets tray icon/menu, timers.
+     * Initializes the FocusVolume class, sets tray icon/menu, timers.
      */
     static init() {
         DetectHiddenWindows(true)
-
-        AudioManager.IMMDevice_ERole := 2 ; voice coms priority over media, for apps like discord
 
         if (!FileExist(SETTINGS.file)) {
             this.DefaultSettings()
@@ -209,12 +224,14 @@ class Utility {
      * @returns {String} Process name or empty string if not found
      */
     static GetAppName(target) {
+        appName := ""
         try {
-            appName := WinGetProcessName(target)
-            return appName
-        } catch {
-            return ""
+            title := WinGetTitle(target)
+            titleParts := StrSplit(title, " - ")
+            appName := titleParts[titleParts.Length]
         }
+
+        return appName
     }
 
     /**
@@ -249,16 +266,6 @@ class Utility {
         )
 
         SetTimer(() => ToolTip(), -1000)
-    }
-
-    /**
-     * Converts To Formatted Title Case
-     * @param {String} title window title
-     * @returns {String} Formatted Title
-     */
-    static FormatTitleCase(title) {
-        title := RegExReplace(title, "\.exe$", "")
-        return StrUpper(SubStr(title, 1, 1)) . SubStr(title, 2)
     }
 }
 
@@ -300,7 +307,7 @@ class Tray {
     static UpdateMenu(title := "", status := "") {
         A_TrayMenu.Delete()
 
-        if (title != "" or status != "") {
+        if (title != "" or status != "" and status != "No App Audio Found") {
             A_TrayMenu.Add(
                 "Last Change: "
                 (title ? title : "")
@@ -311,8 +318,8 @@ class Tray {
             A_TrayMenu.Add()
         }
 
-        if (STATE.toggleFocusActive and title != "") {
-            A_TrayMenu.Add("Focus: " title, this.ToggleFocusMenuItem)
+        if (STATE.LockFocusActive and title != "") {
+            A_TrayMenu.Add("Focus: " title, this.UnLockFocusMenu)
             A_TrayMenu.Add()
         }
 
@@ -328,10 +335,10 @@ class Tray {
         A_TrayMenu.Add()
 
         if (SETTINGS.debug) {
-            A_TrayMenu.Add("&Reload", AppVolume.Restart)
+            A_TrayMenu.Add("&Reload", FocusVolume.Restart)
         }
 
-        A_TrayMenu.Add("E&xit", AppVolume.Exit)
+        A_TrayMenu.Add("E&xit", FocusVolume.Exit)
     }
 
     /**
@@ -344,26 +351,26 @@ class Tray {
             return -1
         }
 
-        appName := Utility.GetAppName("ahk_id " hwnd)
+        appName := WinGetProcessName("ahk_id " hwnd)
         if (!appName or appName = "explorer.exe") {
             return -1
         }
 
-        appAudioSession := AudioManager.GetAudioSession("ahk_id " hwnd)
+        appAudioSession := FocusVolume.GetAudioSession("ahk_id " hwnd)
         if (!appAudioSession) {
             return -1
         }
 
-        volume := AudioManager.GetVolume(appAudioSession)
-        muted := AudioManager.GetMute(appAudioSession)
+        volume := appAudioSession.GetMasterVolume()
+        muted := appAudioSession.GetMute()
 
         status := muted ? "Muted" : Round(volume * 100) "%"
 
         this.UpdateIcon(status)
     }
 
-    static ToggleFocusMenuItem(*) {
-        AppVolume.ToggleFocus(STATE.application)
+    static UnLockFocusMenu(*) {
+        FocusVolume.LockFocus(STATE.application)
         Tray.UpdateMenu()
     }
 
@@ -385,7 +392,7 @@ class Tray {
 
     static OpenSettings(*) {
         if (!FileExist(SETTINGS.file)) {
-            AppVolume.DefaultSettings()
+            FocusVolume.DefaultSettings()
         }
         Run(SETTINGS.file)
     }
