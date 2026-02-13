@@ -4,7 +4,7 @@ Control volume mixer using your volume keys, targeting the currently focused win
 
 Code based on [AppVol.ahk v2 by anonymous1184](https://gist.github.com/anonymous1184/b251cd8407a379d4965791585887cfce#file-appvol-ahk)
 
-## focus_volume.ahk
+## Focus Volume.ahk
 Allows you to use volume keys to control the vocused application
 ### Features
 
