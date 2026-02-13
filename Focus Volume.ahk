@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2
 #SingleInstance Force
-#Include Audio.ahk
+#Include <Audio>
+#Include <SystemThemeAwareToolTip>
 Persistent true
 KeyHistory false
 ListLines false
@@ -24,11 +25,6 @@ Volume_Mute:: {
     FocusVolume.LockFocus()
 }
 
-SETTINGS := FocusVolume.ReadSettings()
-STATE := {
-    application: SETTINGS.application,
-    LockFocusActive: false
-}
 FocusVolume.init()
 
 /**
@@ -37,13 +33,20 @@ FocusVolume.init()
  * @property Set Sets volume or toggles mute for the target app
  */
 class FocusVolume {
+    static SETTINGS := FocusVolume.ReadSettings()
+    static STATE := {
+        application: this.SETTINGS.application,
+        LockFocusActive: false
+    }
+    static Cache := Map()
+
     /**
      * Sets volume or toggles mute for the target app
      * @param {String} [level="+2"] "+/-n", "n", or "toggle"
      * @param {String} [target=STATE.application] Window title / HWND / WinTitle-compatible identifier, ('A'|'ahk_exe '|'ahk_class '|'ahk_id '|'ahk_pid '|'ahk_group ')
      * @example FocusVolume.Set("100", "A")
      */
-    static Set(level := "+2", target := STATE.application) {
+    static Set(level := "+2", target := this.STATE.application) {
         hwnd := Utility.GetAppHWND(target)
         if (!hwnd) {
             return -1
@@ -56,7 +59,7 @@ class FocusVolume {
         } else {
             appAudioSession := this.GetAudioSession("ahk_id " hwnd)
             if (!appAudioSession) {
-                this.HandleAudioResult("", "No App Audio Found")
+                this.HandleAudioResult("", "No Audio")
                 return -1
             }
 
@@ -84,18 +87,16 @@ class FocusVolume {
 
         this.Cache[hwnd] := {
             session: appAudioSession,
-            name: Utility.GetAppName("ahk_id " hwnd),
+            name: appName,
             created: A_TickCount
         }
 
         this.HandleAudioResult(appName, volumeStatus)
     }
 
-    static Cache := Map()
-
     static GetAudioSession(target) {
-        pid := WinGetPID(target)
         sessionEnumerator := IMMDeviceEnumerator().GetDefaultAudioEndpoint().Activate(IAudioSessionManager2).GetSessionEnumerator()
+        pid := WinGetPID(target)
         processName := ProcessGetName(pid)
         failover := 0
 
@@ -123,7 +124,7 @@ class FocusVolume {
      * @param {String} [status=""] status of the result
      */
     static HandleAudioResult(title := "", status := "") {
-        if (SETTINGS.enable_tooltips) {
+        if (this.SETTINGS.enable_tooltips) {
             Utility.CreateToolTip(title, status)
         }
 
@@ -135,38 +136,41 @@ class FocusVolume {
      * Toggles focus to a different application for volume control
      * @param {String} [target=SETTINGS.focus_application] Window title / HWND / WinTitle-compatible identifier, ('A'|'ahk_exe '|'ahk_class '|'ahk_id '|'ahk_pid '|'ahk_group ')
      */
-    static LockFocus(target := SETTINGS.focus_application) {
+    static LockFocus(target := this.SETTINGS.focus_application) {
         targetHWND := Utility.GetAppHWND(target)
-        stateHWND := Utility.GetAppHWND(STATE.application)
+        stateHWND := Utility.GetAppHWND(this.STATE.application)
 
-        targetName := WinGetProcessName("ahk_id " targetHWND)
-        if (!targetName or targetName = "explorer.exe") {
-            return
+        processName := WinGetProcessName("ahk_id " targetHWND)
+        if (!processName or processName = "explorer.exe") {
+            return -1
         }
 
         targetStatus := ""
 
-        if (targetHWND = stateHWND and STATE.LockFocusActive) {
-            STATE.application := SETTINGS.application
-            STATE.LockFocusActive := false
+        if (targetHWND = stateHWND and this.STATE.LockFocusActive) {
+            this.STATE.application := this.SETTINGS.application
+            this.STATE.LockFocusActive := false
             targetStatus := "Unfocused"
 
         } else {
-            STATE.application := "ahk_id " targetHWND
-            STATE.LockFocusActive := true
+            this.STATE.application := "ahk_id " targetHWND
+            this.STATE.LockFocusActive := true
             targetStatus := "Focused"
         }
 
-        this.HandleAudioResult(targetName, targetStatus)
+        this.HandleAudioResult(
+            Utility.GetAppName("ahk_id " targetHWND),
+            targetStatus
+        )
     }
 
     /**
      * Writes default settings to the settings.ini file
      */
     static DefaultSettings() {
-        IniWrite("A", SETTINGS.file, "Preferences", "ApplicationTarget")
-        IniWrite("A", SETTINGS.file, "Preferences", "LockFocusApplication")
-        IniWrite(1, SETTINGS.file, "Preferences", "EnableTooltips")
+        IniWrite("A", this.SETTINGS.file, "Preferences", "ApplicationTarget")
+        IniWrite("A", this.SETTINGS.file, "Preferences", "LockFocusApplication")
+        IniWrite(1, this.SETTINGS.file, "Preferences", "EnableTooltips")
     }
 
     /**
@@ -190,7 +194,7 @@ class FocusVolume {
     static init() {
         DetectHiddenWindows(true)
 
-        if (!FileExist(SETTINGS.file)) {
+        if (!FileExist(this.SETTINGS.file)) {
             this.DefaultSettings()
         }
 
@@ -307,7 +311,7 @@ class Tray {
     static UpdateMenu(title := "", status := "") {
         A_TrayMenu.Delete()
 
-        if (title != "" or status != "" and status != "No App Audio Found") {
+        if ((title != "" or status != "") and status != "No Audio") {
             A_TrayMenu.Add(
                 "Last Change: "
                 (title ? title : "")
@@ -318,7 +322,7 @@ class Tray {
             A_TrayMenu.Add()
         }
 
-        if (STATE.LockFocusActive and title != "") {
+        if (FocusVolume.STATE.LockFocusActive and title != "") {
             A_TrayMenu.Add("Focus: " title, this.UnLockFocusMenu)
             A_TrayMenu.Add()
         }
@@ -326,7 +330,7 @@ class Tray {
         A_TrayMenu.Add("Open &Settings", this.OpenSettings)
 
         A_TrayMenu.Add("Show &Tooltips", this.ToggleTooltips)
-        if (SETTINGS.enable_tooltips) {
+        if (FocusVolume.SETTINGS.enable_tooltips) {
             A_TrayMenu.Check("Show &Tooltips")
         }
 
@@ -334,7 +338,7 @@ class Tray {
         A_TrayMenu.Add("&Volume Mixer", this.OpenVolumeMixer)
         A_TrayMenu.Add()
 
-        if (SETTINGS.debug) {
+        if (FocusVolume.SETTINGS.debug) {
             A_TrayMenu.Add("&Reload", FocusVolume.Restart)
         }
 
@@ -345,20 +349,25 @@ class Tray {
      * Checks currently focused application's volume and updates tray icon
      */
     static HandleFocusChange() {
-        target := STATE.application
+        target := FocusVolume.STATE.application
         hwnd := Utility.GetAppHWND(target)
         if (!hwnd) {
             return -1
         }
 
-        appName := WinGetProcessName("ahk_id " hwnd)
-        if (!appName or appName = "explorer.exe") {
+        processName := WinGetProcessName("ahk_id " hwnd)
+        if (!processName or processName = "explorer.exe") {
             return -1
         }
 
-        appAudioSession := FocusVolume.GetAudioSession("ahk_id " hwnd)
-        if (!appAudioSession) {
-            return -1
+        if (FocusVolume.Cache.Has(hwnd) and (A_TickCount - FocusVolume.Cache[hwnd].created < 30000)) {
+            cached := FocusVolume.Cache[hwnd]
+            appAudioSession := cached.session
+        } else {
+            appAudioSession := FocusVolume.GetAudioSession("ahk_id " hwnd)
+            if (!appAudioSession) {
+                return -1
+            }
         }
 
         volume := appAudioSession.GetMasterVolume()
@@ -370,31 +379,32 @@ class Tray {
     }
 
     static UnLockFocusMenu(*) {
-        FocusVolume.LockFocus(STATE.application)
+        FocusVolume.LockFocus(FocusVolume.STATE.application)
         Tray.UpdateMenu()
     }
 
     static ToggleTooltips(*) {
-        SETTINGS.enable_tooltips := !SETTINGS.enable_tooltips
+        FocusVolume.SETTINGS.enable_tooltips := !FocusVolume.SETTINGS.enable_tooltips
 
-        if (SETTINGS.enable_tooltips) {
+        tooltips := FocusVolume.SETTINGS.enable_tooltips
+        if (tooltips) {
             A_TrayMenu.Check("Show &Tooltips")
         } else {
             A_TrayMenu.Uncheck("Show &Tooltips")
-        }
-
-        IniWrite(SETTINGS.enable_tooltips ? 1 : 0, SETTINGS.file, "Preferences", "EnableTooltips")
-
-        if (!SETTINGS.enable_tooltips) {
             ToolTip()
         }
+
+        IniWrite(tooltips ? 1 : 0,
+            FocusVolume.SETTINGS.file,
+            "Preferences", "EnableTooltips"
+        )
     }
 
     static OpenSettings(*) {
-        if (!FileExist(SETTINGS.file)) {
+        if (!FileExist(FocusVolume.SETTINGS.file)) {
             FocusVolume.DefaultSettings()
         }
-        Run(SETTINGS.file)
+        Run(FocusVolume.SETTINGS.file)
     }
 
     static OpenVolumeMixer(*) {
