@@ -298,8 +298,12 @@ class IMMDevice extends IAudioBase {
     GetId() => (ComCall(5, this, "Ptr*", &strId := 0), IAudioBase.STR(strId))
 
     /**
-     * @description {@link https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getstate|GetState()}
-     * Retrieves the current device state.
+     * @description {@link https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getstate|GetState()}<br>
+     * Retrieves the current device state.<br>
+     * 1: DEVICE_STATE_ACTIVE,<br>
+     * 2: DEVICE_STATE_DISABLED,<br>
+     * 4: DEVICE_STATE_NOTPRESENT,<br>
+     * 8: DEVICE_STATE_UNPLUGGED
      * @returns {Integer}
      */
     GetState() => (ComCall(6, this, "UInt*", &dwState := 0), dwState)
